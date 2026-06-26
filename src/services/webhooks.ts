@@ -7,6 +7,7 @@ export interface WebhookSubscriber {
   secret: string
   events: string[]
   active: boolean
+  orgId?: string
   createdAt: string
 }
 
@@ -104,7 +105,13 @@ export const verifySignature = (secret: string, body: string, signature: string)
   return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(signature, 'utf8'))
 }
 
-export const addSubscriber = (url: string, secret: string, events: string[]): WebhookSubscriber => {
+export const addSubscriber = (
+  url: string,
+  secret: string,
+  events: string[],
+  orgId?: string,
+  active = true,
+): WebhookSubscriber => {
   if (!isUrlAllowed(url)) {
     throw new Error(`Webhook URL not permitted: ${url}`)
   }
@@ -114,7 +121,8 @@ export const addSubscriber = (url: string, secret: string, events: string[]): We
     url,
     secret,
     events: [...events],
-    active: true,
+    active,
+    orgId,
     createdAt: new Date().toISOString(),
   }
 
@@ -122,10 +130,36 @@ export const addSubscriber = (url: string, secret: string, events: string[]): We
   return subscriber
 }
 
-export const removeSubscriber = (id: string): boolean => subscribers.delete(id)
+export const removeSubscriber = (id: string, orgId?: string): boolean => {
+  const subscriber = subscribers.get(id)
+  if (!subscriber) {
+    return false
+  }
 
-export const listSubscribers = (): WebhookSubscriber[] =>
-  Array.from(subscribers.values()).filter((s) => s.active)
+  if (orgId && subscriber.orgId !== orgId) {
+    return false
+  }
+
+  return subscribers.delete(id)
+}
+
+export const listSubscribers = (orgId?: string): WebhookSubscriber[] =>
+  Array.from(subscribers.values()).filter((s) => s.active && (!orgId || s.orgId === orgId))
+
+export const updateSubscriberSecret = (id: string, secret: string, orgId?: string): WebhookSubscriber | null => {
+  const subscriber = subscribers.get(id)
+  if (!subscriber) {
+    return null
+  }
+
+  if (orgId && subscriber.orgId !== orgId) {
+    return null
+  }
+
+  const updated = { ...subscriber, secret }
+  subscribers.set(id, updated)
+  return updated
+}
 
 /** Test helper – clears all subscribers. */
 export const resetSubscribers = (): void => subscribers.clear()
