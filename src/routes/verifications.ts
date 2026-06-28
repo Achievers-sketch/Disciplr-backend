@@ -210,6 +210,7 @@ verificationsRouter.post('/bulk', authenticate, requireVerifier, async (req: Req
       }
 
       const cleanTargetId = targetId.trim()
+      const cleanEvidenceReferenceUrl = evidenceReferenceUrl.trim()
 
       // Process the verification
       const rec = await retryWithBackoff(
@@ -247,8 +248,8 @@ verificationsRouter.post('/bulk', authenticate, requireVerifier, async (req: Req
 
       const evidenceReference = await createEvidenceReference(
         rec.id,
-        evidenceHash.trim(),
-        evidenceReferenceUrl.trim(),
+        cleanEvidenceHash,
+        cleanEvidenceReferenceUrl,
       )
 
       itemResult.success = true
