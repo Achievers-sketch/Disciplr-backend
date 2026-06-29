@@ -5,6 +5,7 @@ module.exports = {
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^@prisma/client$": "<rootDir>/src/tests/__mocks__/prisma.ts",
+    "^argon2$": "<rootDir>/src/tests/__mocks__/argon2.ts",
   },
   transform: {
     "^.+\\.tsx?$": [
