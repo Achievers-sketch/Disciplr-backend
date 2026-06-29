@@ -1,9 +1,9 @@
 import { orgAnalyticsRateLimiter } from "../middleware/rateLimiter.js";
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth.js";
-import { requireOrgAccess } from "../middleware/orgAuth.js";
+import { requireOrgAccess, requireOrgRole } from "../middleware/orgAuth.js";
 import { vaults, Vault } from "./vaults.js";
-// PASTE LOCATION 1: Imported our new service function here
+import { getTeamRollup } from "../services/team.js";
 import { getCohortRetention } from "../services/analytics.service.js";
 
 export const orgAnalyticsRouter = Router();
@@ -71,7 +71,7 @@ orgAnalyticsRouter.get(
   },
 );
 
-// PASTE LOCATION 2: Added the brand-new cohort retention endpoint at the very end
+// Added the brand-new cohort retention endpoint
 orgAnalyticsRouter.get(
   "/:orgId/cohort-retention",
   authenticate,
@@ -93,6 +93,24 @@ orgAnalyticsRouter.get(
       });
     } catch (error) {
       next(error);
+    }
+  },
+);
+
+// Main branch team rollup endpoint preserved intact
+orgAnalyticsRouter.get(
+  "/:orgId/teams/rollup",
+  authenticate,
+  requireOrgRole(["owner", "admin"]),
+  orgAnalyticsRateLimiter,
+  async (req: Request, res: Response) => {
+    const { orgId } = req.params;
+
+    try {
+      const rollup = await getTeamRollup(orgId);
+      res.json(rollup);
+    } catch {
+      res.status(500).json({ error: "Failed to generate team rollup" });
     }
   },
 );
