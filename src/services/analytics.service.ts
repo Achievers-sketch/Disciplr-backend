@@ -192,3 +192,18 @@ export async function updateAnalyticsSummary(orgId?: string): Promise<void> {
   await dbUpdateSummary()
   await invalidate('analytics:overall', orgId)
 }
+
+/**
+ * Render a point-in-time analytics snapshot for a single org.
+ * Pulls vault IDs from the in-memory vaults store so it works without a DB.
+ */
+export function renderOrgAnalyticsSnapshot(orgId: string): OrgVaultAnalytics & { orgId: string; snapshotAt: string } {
+  // Import lazily to avoid circular deps and to stay hermetic in tests
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { vaults } = require('../routes/vaults.js') as { vaults: Array<{ id: string; orgId?: string }> }
+  const orgVaultIds = vaults
+    .filter((v) => v.orgId === orgId)
+    .map((v) => v.id)
+  const analytics = getOrgAnalyticsBatched(orgVaultIds)
+  return { ...analytics, orgId, snapshotAt: utcNow() }
+}

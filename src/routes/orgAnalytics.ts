@@ -4,6 +4,9 @@ import { authenticate } from '../middleware/auth.js'
 import { requireOrgAccess, requireOrgRole } from '../middleware/orgAuth.js'
 import { vaults, Vault } from './vaults.js'
 import { getTeamRollup } from '../services/team.js'
+import { getOrgReports } from '../services/analyticsReports.js'
+import { resolveS3Config, getExportSignedUrl } from '../services/exportS3.js'
+import { parsePaginationParams, paginateArray } from '../utils/pagination.js'
 
 export const orgAnalyticsRouter = Router()
 
@@ -76,5 +79,55 @@ orgAnalyticsRouter.get(
     } catch {
       res.status(500).json({ error: 'Failed to generate team rollup' })
     }
+  }
+)
+
+/**
+ * GET /api/orgs/:orgId/analytics/reports
+ *
+ * List all point-in-time analytics reports for the org.  Each entry includes a
+ * signed, expiring download URL when S3 is configured, or a local download path
+ * otherwise.  Paginated; newest reports appear first.  Access is restricted to
+ * owner/admin members of the org (strict per-org isolation).
+ */
+orgAnalyticsRouter.get(
+  '/:orgId/analytics/reports',
+  authenticate,
+  requireOrgAccess('owner', 'admin'),
+  orgAnalyticsRateLimiter,
+  async (req: Request, res: Response) => {
+    const { orgId } = req.params
+    const pagination = parsePaginationParams(req)
+    const s3Config = resolveS3Config()
+
+    const allReports = getOrgReports(orgId)
+    const paginated = paginateArray(allReports, pagination)
+
+    const items = await Promise.all(
+      paginated.data.map(async (r) => {
+        let downloadUrl: string | null = null
+        if (r.s3Key && s3Config) {
+          try {
+            downloadUrl = await getExportSignedUrl(s3Config, r.s3Key)
+          } catch {
+            // signed URL generation failure is non-fatal; return null
+          }
+        } else if (r.localBuffer) {
+          // In non-S3 mode expose a local download path so clients can retrieve it
+          downloadUrl = `/api/orgs/${orgId}/analytics/reports/${r.id}/download`
+        }
+
+        return {
+          id: r.id,
+          orgId: r.orgId,
+          snapshotAt: r.snapshotAt,
+          createdAt: r.createdAt,
+          sizeBytes: r.sizeBytes,
+          downloadUrl,
+        }
+      }),
+    )
+
+    res.json({ ...paginated, data: items })
   }
 )
