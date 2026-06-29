@@ -83,10 +83,10 @@ export function getOrgAnalyticsBatched(vaultIds: string[], dbOverride?: DbLike):
     completedMilestones,
   }
 }
-import { getOrSet, invalidate } from '../lib/cache.js'
+import { getOrSet, getOrLoad, invalidate } from '../lib/cache.js'
 
 export async function getOverallAnalytics(orgId?: string): Promise<VaultAnalytics> {
-  return getOrSet('analytics:overall', 300, async () => {
+  return getOrLoad('analytics:overall', 300, async () => {
     const summary = await readAnalyticsSummary()
     
     return {
