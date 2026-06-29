@@ -7,7 +7,9 @@ module.exports = {
     "^@prisma/client$": "<rootDir>/src/tests/__mocks__/prisma.ts",
     // pnpm hoists mime@2.x but send@0.19.2 (Express) needs mime@1.x (charsets/lookup)
     // while superagent (supertest) needs mime@2.x (getType). Use a shim with both APIs.
-    "^mime$": "<rootDir>/src/tests/__mocks__/mime.js",
+    "^mime$": "<rootDir>/src/tests/__mocks__/mime.cjs",
+    "^argon2$": "<rootDir>/src/tests/__mocks__/argon2.ts",
+
   },
   transform: {
     "^.+\\.tsx?$": [
