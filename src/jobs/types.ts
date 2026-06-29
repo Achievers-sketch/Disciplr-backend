@@ -6,6 +6,7 @@ export const JOB_TYPES = [
   'milestone.reminders.deferred',
   'oracle.call',
   'analytics.recompute',
+  'analytics.report.generate',
   'export.generate',
   'vault.reconcile',
   'sessions.cleanup',
@@ -54,6 +55,10 @@ export interface AnalyticsRecomputeJobPayload {
   reason?: string
 }
 
+export interface AnalyticsReportGenerateJobPayload {
+  orgIds?: string[] // if omitted, runs for all known orgs
+}
+
 export interface ExportGenerateJobPayload {
   exportJobId: string
 }
@@ -88,6 +93,7 @@ export interface JobPayloadByType {
   'milestone.reminders.deferred': MilestoneRemindersDeferredJobPayload
   'oracle.call': OracleCallJobPayload
   'analytics.recompute': AnalyticsRecomputeJobPayload
+  'analytics.report.generate': AnalyticsReportGenerateJobPayload
   'export.generate': ExportGenerateJobPayload
   'vault.reconcile': VaultReconcileJobPayload
   'sessions.cleanup': SessionsCleanupJobPayload
@@ -176,6 +182,8 @@ export const isPayloadForJobType = (
         isOptionalString(payload.entityId) &&
         isOptionalString(payload.reason)
       )
+    case 'analytics.report.generate':
+      return payload.orgIds === undefined || Array.isArray(payload.orgIds)
     case 'export.generate':
       return isNonEmptyString(payload.exportJobId)
     case 'vault.reconcile':

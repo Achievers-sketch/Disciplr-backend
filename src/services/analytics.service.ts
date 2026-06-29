@@ -224,46 +224,21 @@ export async function getCapitalAnalytics(period: string = "all"): Promise<{
 }
 
 export async function updateAnalyticsSummary(orgId?: string): Promise<void> {
-  await dbUpdateSummary();
-  await invalidate("analytics:overall", orgId);
+  await dbUpdateSummary()
+  await invalidate('analytics:overall', orgId)
 }
 
 /**
- * Retrieves monthly vault creation cohort metrics and retention trends
- * from the vault_cohort_retention materialized view.
- * @param {any} db The database knex connection instance passed from the router/service layer
- * @param {number} [range] Optional filter specifying the number of past months to fetch
+ * Render a point-in-time analytics snapshot for a single org.
+ * Pulls vault IDs from the in-memory vaults store so it works without a DB.
  */
-export async function getCohortRetention(
-  db: any,
-  range?: number,
-): Promise<any[]> {
-  let query = db("vault_cohort_retention")
-    .select(
-      "cohort_month",
-      "total",
-      "completed",
-      "failed",
-      "active",
-      "median_days_to_complete",
-    )
-    .orderBy("cohort_month", "desc");
-
-  if (range && range > 0) {
-    query = query.limit(range);
-  }
-
-  const rows = await query;
-
-  return rows.map((row: any) => ({
-    ...row,
-    cohort_month:
-      row.cohort_month instanceof Date
-        ? row.cohort_month.toISOString().split("T")[0]
-        : row.cohort_month,
-    median_days_to_complete:
-      row.median_days_to_complete !== null
-        ? parseFloat(parseFloat(row.median_days_to_complete).toFixed(1))
-        : null,
-  }));
+export function renderOrgAnalyticsSnapshot(orgId: string): OrgVaultAnalytics & { orgId: string; snapshotAt: string } {
+  // Import lazily to avoid circular deps and to stay hermetic in tests
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { vaults } = require('../routes/vaults.js') as { vaults: Array<{ id: string; orgId?: string }> }
+  const orgVaultIds = vaults
+    .filter((v) => v.orgId === orgId)
+    .map((v) => v.id)
+  const analytics = getOrgAnalyticsBatched(orgVaultIds)
+  return { ...analytics, orgId, snapshotAt: utcNow() }
 }

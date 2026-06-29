@@ -194,6 +194,7 @@ export class BackgroundJobSystem {
     this.queue.registerHandler('deadline.check', handlers['deadline.check'])
     this.queue.registerHandler('oracle.call', handlers['oracle.call'])
     this.queue.registerHandler('analytics.recompute', handlers['analytics.recompute'])
+    this.queue.registerHandler('analytics.report.generate', handlers['analytics.report.generate'])
     this.queue.registerHandler('export.generate', handlers['export.generate'])
     this.queue.registerHandler('sessions.cleanup', handlers['sessions.cleanup'])
     this.queue.registerHandler('outbox.relay', handlers['outbox.relay'])
@@ -301,6 +302,10 @@ export class BackgroundJobSystem {
       process.env.SAVED_SEARCH_EVAL_INTERVAL_MS,
       15 * 60_000, // 15 minutes
     )
+    const analyticsReportIntervalMs = parsePositiveInteger(
+      process.env.ANALYTICS_REPORT_INTERVAL_MS,
+      24 * 60 * 60_000, // 24 hours
+    )
 
     this.schedulerRegistry.registerJob({
       name: 'deadline.check',
@@ -360,6 +365,15 @@ export class BackgroundJobSystem {
       immediate: false,
       execute: () => {
         this.enqueue('saved-search.evaluate', {})
+      },
+    })
+
+    this.schedulerRegistry.registerJob({
+      name: 'analytics.report.generate',
+      intervalMs: analyticsReportIntervalMs,
+      immediate: false,
+      execute: () => {
+        this.enqueue('analytics.report.generate', {})
       },
     })
   }
