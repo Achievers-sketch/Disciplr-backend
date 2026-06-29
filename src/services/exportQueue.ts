@@ -6,7 +6,7 @@ import type { BackgroundJobSystem } from '../jobs/system.js'
 import { Readable, Transform } from 'node:stream'
 import { createGzip, gzipSync } from 'node:zlib'
 import { maskPii, sanitizePrivacyPayload, sanitizePrivacyString } from '../utils/privacy.js'
-import { resolveS3Config, uploadToS3 } from '../services/exportS3.js'
+import { resolveS3Config, uploadToS3, sanitizeS3KeySegment } from '../services/exportS3.js'
 
 export type ExportFormat = 'csv' | 'json' | 'ndjson'
 export type ExportScope = 'vaults' | 'transactions' | 'analytics' | 'all'
@@ -791,7 +791,9 @@ export async function processJob(
     const s3Config = resolveS3Config()
     let s3Key: string | undefined
     if (s3Config) {
-      const key = `exports/${job.id}/${filename}`
+      const safeJobId = sanitizeS3KeySegment(job.id)
+      const safeFilename = sanitizeS3KeySegment(filename ?? `export-${job.id}`)
+      const key = `exports/${safeJobId}/${safeFilename}`
       const contentType = job.format === 'csv'
         ? 'text/csv; charset=utf-8'
         : job.format === 'json'
