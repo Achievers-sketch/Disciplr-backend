@@ -16,7 +16,7 @@ export type { OrgRole } from '../models/organizations.js'
 export function requireOrgAccess(...allowedRoles: (OrgRole | string)[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const orgId = req.params.orgId || (req.query.orgId as string)
-    const userId = req.user?.userId || (req.user as any)?.sub
+    const userId = req.user?.userId || (req.user as any)?.sub || (req as any).authUser?.userId
 
     if (!orgId || !userId) {
       res.status(401).json({ error: 'Auth/Org info missing' })

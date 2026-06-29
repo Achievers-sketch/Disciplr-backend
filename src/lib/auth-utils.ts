@@ -77,10 +77,8 @@ function findKeyByKid(keys: JwtKey[], kid: string): JwtKey {
 export const generateAccessToken = (payload: { userId: string; role: string; jti?: string; impersonator?: string }, env?: Env): string => {
   let keys: JwtKey[] = [];
   try {
-    const resolvedEnv = env || getEnv();
-    if (resolvedEnv) {
-      keys = getJwtKeys(resolvedEnv);
-    }
+    const resolvedEnv = env ?? getEnv();
+    keys = getJwtKeys(resolvedEnv);
   } catch (e) {
     // ignore
   }
@@ -127,10 +125,8 @@ export const generateImpersonationToken = (impersonatorId: string, targetUserId:
 export const generateRefreshToken = (payload: { userId: string }, env?: Env): string => {
   let keys: JwtKey[] = [];
   try {
-    const resolvedEnv = env || getEnv();
-    if (resolvedEnv) {
-      keys = getJwtKeys(resolvedEnv);
-    }
+    const resolvedEnv = env ?? getEnv();
+    keys = getJwtKeys(resolvedEnv);
   } catch (e) {
     // ignore
   }
@@ -153,10 +149,8 @@ export const verifyAccessToken = (token: string, env?: Env) => {
   const kid = decodedHeader?.header?.kid;
   let keys: JwtKey[] = [];
   try {
-    const resolvedEnv = env || getEnv();
-    if (resolvedEnv) {
-      keys = getJwtKeys(resolvedEnv);
-    }
+    const resolvedEnv = env ?? getEnv();
+    keys = getJwtKeys(resolvedEnv);
   } catch (e) {
     // ignore
   }
@@ -181,10 +175,8 @@ export const verifyRefreshToken = (token: string, env?: Env) => {
   const kid = decodedHeader?.header?.kid;
   let keys: JwtKey[] = [];
   try {
-    const resolvedEnv = env || getEnv();
-    if (resolvedEnv) {
-      keys = getJwtKeys(resolvedEnv);
-    }
+    const resolvedEnv = env ?? getEnv();
+    keys = getJwtKeys(resolvedEnv);
   } catch (e) {
     // ignore
   }

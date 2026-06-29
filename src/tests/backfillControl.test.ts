@@ -72,7 +72,7 @@ jest.unstable_mockModule('../services/session.js', () => ({
   forceRevokeUserSessions: jest.fn<any>(), revokeAllUserSessions: jest.fn<any>(),
 }))
 jest.unstable_mockModule('../services/vaultStore.js', () => ({ cancelVaultById: jest.fn<any>() }))
-jest.unstable_mockModule('../services/dbMetrics.js', () => ({ getDBHealthMetrics: jest.fn<any>() }))
+jest.unstable_mockModule('../services/dbMetrics.js', () => ({ getDBHealthMetrics: jest.fn<any>(), getSlowQueryBuffer: jest.fn<any>(() => []) }))
 jest.unstable_mockModule('../services/featureFlags.js', () => ({
   getFlag: jest.fn<any>(), setFlag: jest.fn<any>(),
   isValidFeatureFlag: jest.fn<any>(), getAllFlags: jest.fn<any>(),

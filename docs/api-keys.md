@@ -74,6 +74,35 @@ curl -X POST "http://localhost:3000/api/api-keys/<api-key-id>/revoke" \
   -H "x-user-id: user-123"
 ```
 
+### Usage Analytics
+
+`GET /api/orgs/:id/api-keys/usage`
+
+Retrieves per-key usage analytics (last-used timestamp, total request counter, and last-seen IP) for all keys under the organization. Restricted to organization owners and admins. Never exposes secrets or hashes.
+
+```bash
+curl "http://localhost:3000/api/orgs/org-123/api-keys/usage" \
+  -H "x-user-id: user-123"
+```
+
+Response:
+```json
+{
+  "usage": [
+    {
+      "id": "a1b2c3d4...",
+      "label": "read-only analytics key",
+      "scopes": ["read:analytics"],
+      "createdAt": "2026-06-28T12:00:00.000Z",
+      "revokedAt": null,
+      "lastUsedAt": "2026-06-28T18:25:00.000Z",
+      "requestCount": 42,
+      "lastIp": "192.168.1.10"
+    }
+  ]
+}
+```
+
 ## Using a key
 
 Use the issued secret in the `x-api-key` header on API-key protected endpoints.
