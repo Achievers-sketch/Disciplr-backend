@@ -46,6 +46,7 @@ export interface WebhookSubscriber {
   fieldPolicy: FieldPolicy
 }
 
+export const DEFAULT_MAX_REPLAY_EVENTS = 500
 export const LATEST_SCHEMA_VERSION = 2
 export const DEFAULT_SCHEMA_VERSION = 1
 export const SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2])
@@ -66,6 +67,20 @@ export interface WebhookDeliveryResult {
   success: boolean
   error?: string
   attempts: number
+}
+
+export interface ReplayWindowOptions {
+  replayMarker?: string
+  maxEvents?: number
+}
+
+export interface ReplayWindowResult {
+  replayed: boolean
+  count: number
+  successCount: number
+  failureCount: number
+  replayMarker?: string
+  error?: string
 }
 
 export type BreakerStateValue = 'CLOSED' | 'OPEN' | 'HALF_OPEN'
@@ -837,23 +852,14 @@ export const dispatchWebhookEvent = async (
         if (isHalfOpenProbe) {
           inFlightProbes.delete(subscriber.id)
         }
-
-  const eligible = await repo.findByEvent(payload.organizationId, payload.eventType)
-
-  // Enqueue all subscribers to the bounded dispatcher
-  // Returns immediately; dispatcher handles concurrency internally
-  for (const subscriber of eligible) {
-    webhookDispatcher.enqueue(subscriber, payload)
-  }
-
-        await persistDeliveryAttempt(subscriber.id, payload, false, latencyMs, lastStatusCode, attempts, error)
-        await deadLetter(subscriber.id, payload, error, attempts)
+        await recordBreakerFailure(subscriber.id, config)
+        const reason = err?.message ?? 'Delivery failed'
+        await deadLetter(subscriber.id, payload, reason, attempts)
         return {
           subscriberId: subscriber.id,
           url: subscriber.url,
-          statusCode: lastStatusCode,
           success: false,
-          error,
+          error: reason,
           attempts,
         }
       }
@@ -930,6 +936,133 @@ export const replayDeadLetter = async (
     return { replayed: true, subscriberId: subscriber.id }
   } catch (err: any) {
     return { replayed: false, error: err?.message ?? 'Delivery failed' }
+  }
+}
+
+/**
+ * Replays all dead-letter entries for a subscriber within a time window.
+ *
+ * Idempotent when a `replayMarker` is provided — re-using the same marker
+ * returns the original result without re-sending deliveries.
+ *
+ * Rate-bounded by `maxEvents` (default DEFAULT_MAX_REPLAY_EVENTS) to avoid
+ * flooding the subscriber. Reuses the existing signing and delivery path
+ * (`deliverOnce`) so payload schema versioning, HMAC signing, and circuit
+ * breaker logic are applied consistently.
+ */
+export const replayWindow = async (
+  subscriberId: string,
+  startTime: string,
+  endTime: string,
+  options: ReplayWindowOptions = {},
+): Promise<ReplayWindowResult> => {
+  const maxEvents = options.maxEvents ?? DEFAULT_MAX_REPLAY_EVENTS
+
+  // Validate subscriber exists
+  const subscriber = await repo.findById(subscriberId)
+  if (!subscriber) {
+    return { replayed: false, count: 0, successCount: 0, failureCount: 0, error: 'Subscriber not found' }
+  }
+
+  // Validate time range
+  const start = new Date(startTime)
+  const end = new Date(endTime)
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return { replayed: false, count: 0, successCount: 0, failureCount: 0, error: 'Invalid time range' }
+  }
+  if (start >= end) {
+    return { replayed: false, count: 0, successCount: 0, failureCount: 0, error: 'start_time must be before end_time' }
+  }
+
+  // Check replay marker for idempotency
+  if (options.replayMarker) {
+    const existing = await db('webhook_replay_markers')
+      .where({ replay_marker: options.replayMarker })
+      .first()
+    if (existing) {
+      if (existing.status === 'completed') {
+        return {
+          replayed: true,
+          count: existing.total_count,
+          successCount: existing.success_count,
+          failureCount: existing.failure_count,
+          replayMarker: existing.replay_marker,
+        }
+      }
+      return {
+        replayed: false,
+        count: 0,
+        successCount: 0,
+        failureCount: 0,
+        replayMarker: options.replayMarker,
+        error: 'Replay already in progress',
+      }
+    }
+  }
+
+  // Query dead letters for this subscriber in the time window
+  const deadLetters = await db('webhook_dead_letters')
+    .where('subscriber_id', subscriberId)
+    .where('failed_at', '>=', start.toISOString())
+    .where('failed_at', '<=', end.toISOString())
+    .orderBy('failed_at', 'asc')
+    .limit(maxEvents)
+
+  if (deadLetters.length === 0) {
+    return { replayed: true, count: 0, successCount: 0, failureCount: 0, replayMarker: options.replayMarker }
+  }
+
+  // Create replay marker record
+  let markerId: string | undefined
+  if (options.replayMarker) {
+    const [marker] = await db('webhook_replay_markers')
+      .insert({
+        subscriber_id: subscriberId,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        replay_marker: options.replayMarker,
+        status: 'in_progress',
+        total_count: deadLetters.length,
+      })
+      .returning('id')
+    markerId = marker.id
+  }
+
+  // Replay each dead letter using the existing signing and delivery path
+  let successCount = 0
+  let failureCount = 0
+  const errors: Array<{ eventId: string; error: string }> = []
+
+  for (const dl of deadLetters) {
+    try {
+      await deliverOnce(subscriber, dl.payload)
+      await db('webhook_dead_letters').where({ id: dl.id }).update({ replayed_at: new Date().toISOString() })
+      successCount++
+    } catch (err: any) {
+      failureCount++
+      errors.push({ eventId: dl.event_id, error: err?.message ?? 'Delivery failed' })
+    }
+  }
+
+  // Update replay marker record
+  if (markerId) {
+    await db('webhook_replay_markers')
+      .where({ id: markerId })
+      .update({
+        status: 'completed',
+        success_count: successCount,
+        failure_count: failureCount,
+        errors: errors.length > 0 ? JSON.stringify(errors) : null,
+        completed_at: new Date(),
+      })
+  }
+
+  return {
+    replayed: true,
+    count: deadLetters.length,
+    successCount,
+    failureCount,
+    replayMarker: options.replayMarker,
   }
 }
 

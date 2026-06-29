@@ -76,7 +76,77 @@ Breaker state counts are exposed as Prometheus gauges at `/api/metrics`:
 | `disciplr_webhook_breaker_open` | Subscribers in OPEN state |
 | `disciplr_webhook_breaker_half_open` | Subscribers in HALF_OPEN state |
 
-## Dead-Letter Queue
+### Window Replay (Admin)
+
+When a subscriber endpoint was down for a maintenance window, an operator can
+redeliver all dead-letter entries from a time range using the admin window-replay
+endpoint.
+
+#### `POST /api/admin/webhooks/:subscriber_id/replay`
+
+Replays all dead-letter entries for a subscriber within `[start_time, end_time]`.
+Uses the existing signing and delivery path (HMAC-SHA256, schema versioning,
+circuit breaker checks).
+
+**Authorization:** Admin only (`x-user-role: admin`).
+
+**Request Body:**
+```json
+{
+  "start_time": "2026-06-27T00:00:00.000Z",
+  "end_time": "2026-06-28T00:00:00.000Z",
+  "replay_marker": "optional-unique-idempotency-key",
+  "max_events": 500
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `start_time` | string (ISO 8601) | Yes | Start of the time window (inclusive) |
+| `end_time` | string (ISO 8601) | Yes | End of the time window (inclusive) |
+| `replay_marker` | string | No | Idempotency key — re-using the same marker returns cached results without re-sending deliveries |
+| `max_events` | integer | No | Rate bound: maximum events to replay (default 500, min 1) |
+
+**Response 200:**
+```json
+{
+  "replayed": true,
+  "count": 42,
+  "success_count": 40,
+  "failure_count": 2,
+  "replay_marker": "optional-unique-idempotency-key"
+}
+```
+
+**Response 400 (validation error):**
+```json
+{ "error": "start_time is required (ISO 8601)" }
+```
+
+**Response 404 (subscriber not found):**
+```json
+{ "error": "Subscriber not found" }
+```
+
+**Idempotency with replay_marker:**
+
+When a `replay_marker` is provided, the endpoint stores the result keyed by that
+marker. Subsequent calls with the same marker return the original result without
+making any new delivery attempts. This is safe to retry on network timeouts or
+interruptions.
+
+**Rate bounding:**
+
+The `max_events` parameter limits the number of entries processed in a single
+request (default 500, cap at subscriber count). For larger windows, operators
+should paginate by narrowing the time range.
+
+**Audit log entry:**
+
+Each replay writes an audit log entry with action `webhook.window_replay`,
+including `startTime`, `endTime`, `count`, `successCount`, and `failureCount`.
+
+---
 
 When a delivery permanently fails (exhausts retries) or is short-circuited by an open breaker, the failed delivery is persisted to the `webhook_dead_letters` table for later inspection and replay.
 
