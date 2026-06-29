@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express'
+import { Router, Request, Response, NextFunction } from 'express'
 import { requireAdmin } from '../middleware/rbac.js'
 import { queryParser } from '../middleware/queryParser.js'
 import { authenticate } from '../middleware/auth.js'
@@ -31,6 +31,8 @@ import { generateImpersonationToken } from '../lib/auth-utils.js'
 import { getPrisma } from '../lib/prismaScope.js'
 import { recordSession } from '../services/session.js'
 import { randomUUID } from 'node:crypto'
+import { BackfillCursorStore } from '../services/backfillCursorStore.js'
+import { metricsRateLimiter } from '../middleware/rateLimiter.js'
 
 export const adminRouter = Router()
 
@@ -833,5 +835,68 @@ adminRouter.post('/impersonate/:userId', requireStepUp(), async (req: Request, r
     })
   } catch (error: any) {
     next(error)
+  }
+})
+
+
+/**
+ * GET /api/admin/backfills
+ * List all known backfill jobs with cursor, processed count, paused status, and ETA.
+ */
+adminRouter.get('/backfills', async (req: Request, res: Response) => {
+  try {
+    const store = new BackfillCursorStore(db)
+    const data = await store.listProgress()
+    res.status(200).json({ data })
+  } catch (error) {
+    console.error('Error listing backfill progress:', error)
+    res.status(500).json({ error: 'Failed to list backfill progress' })
+  }
+})
+
+/**
+ * POST /api/admin/backfills/:name/pause
+ * Pause a running backfill job. The cursor is preserved so resume continues from
+ * the same position without reprocessing already-done ranges.
+ */
+adminRouter.post('/backfills/:name/pause', async (req: Request, res: Response) => {
+  try {
+    const { name } = req.params
+    const store = new BackfillCursorStore(db)
+    await store.pause(name)
+    await createAuditLog({
+      actor_user_id: req.user!.userId,
+      action: 'backfill.pause',
+      target_type: 'backfill',
+      target_id: name,
+      metadata: {},
+    })
+    res.status(200).json({ paused: true, jobName: name })
+  } catch (error) {
+    console.error('Error pausing backfill:', error)
+    res.status(500).json({ error: 'Failed to pause backfill' })
+  }
+})
+
+/**
+ * POST /api/admin/backfills/:name/resume
+ * Resume a paused backfill job from its saved cursor.
+ */
+adminRouter.post('/backfills/:name/resume', async (req: Request, res: Response) => {
+  try {
+    const { name } = req.params
+    const store = new BackfillCursorStore(db)
+    await store.resume(name)
+    await createAuditLog({
+      actor_user_id: req.user!.userId,
+      action: 'backfill.resume',
+      target_type: 'backfill',
+      target_id: name,
+      metadata: {},
+    })
+    res.status(200).json({ paused: false, jobName: name })
+  } catch (error) {
+    console.error('Error resuming backfill:', error)
+    res.status(500).json({ error: 'Failed to resume backfill' })
   }
 })

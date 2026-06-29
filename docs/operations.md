@@ -298,6 +298,65 @@ If `REDIS_URL` is not provided (e.g., during tests or local development), the ca
 
 To prevent stale-shaped objects from causing schema mismatch issues, all cached payloads are explicitly version-tagged (e.g., `{"version":"v1","data":...}`). Any version change triggers an automatic cache miss, ensuring that updated structures are always loaded fresh from the database.
 
+## Backfill Progress and Pause/Resume Control
+
+Long-running backfill jobs (e.g. the milestone-evidence embedding reindex) can be observed and controlled by admins via the following endpoints. All write actions are audit-logged.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/backfills` | List all known backfill jobs with cursor, processed count, paused status, and ETA |
+| `POST` | `/api/admin/backfills/:name/pause` | Pause a backfill; preserves the cursor so resume continues without reprocessing |
+| `POST` | `/api/admin/backfills/:name/resume` | Resume a paused backfill from its saved cursor |
+
+All endpoints require an admin token (`x-user-role: admin`).
+
+### Progress response shape
+
+```json
+{
+  "data": [
+    {
+      "jobName": "milestone-evidence-embedding-reindex",
+      "cursor": "milestone-id-last-seen",
+      "processed": 1500,
+      "paused": false,
+      "etaMs": 30000,
+      "updatedAt": "2026-06-29T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+- `etaMs` is derived from observed throughput samples. It is `null` when total item count is unknown or there is insufficient throughput data.
+
+### Pause mid-batch
+
+A paused backfill stops claiming new work at the start of the next batch. The cursor saved from the last completed batch is preserved. On resume, processing continues from that cursor with no gaps or duplicate processing.
+
+### Audit log actions
+
+| Action | When |
+|--------|------|
+| `backfill.pause` | `POST /api/admin/backfills/:name/pause` |
+| `backfill.resume` | `POST /api/admin/backfills/:name/resume` |
+
+### Example
+
+```bash
+# List all backfill jobs
+curl -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:3000/api/admin/backfills
+
+# Pause the embedding reindex
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://localhost:3000/api/admin/backfills/milestone-evidence-embedding-reindex/pause
+
+# Resume it
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://localhost:3000/api/admin/backfills/milestone-evidence-embedding-reindex/resume
+```
+
 ## Runbooks
 
 | Scenario | Runbook |
