@@ -108,26 +108,54 @@ export const startExpirationChecker = (
   const resolvedJobSystem = jobSystem ?? getDefaultJobSystem();
 
   const runCheck = async () => {
+    let trx;
     try {
-      const expired = await processExpiredVaultsBatch();
-      await enqueueSlashJobs(expired, resolvedJobSystem);
-    } catch (error) {
-      console.error("[ExpirationChecker] Check failed:", error);
-    } finally {
+      trx = await db.transaction()
+    } catch (e) {
+      console.error('[ExpirationChecker] Failed to start transaction for heartbeat lock:', e)
+      return
+    }
+
+    try {
+      // Create the row if it doesn't exist so we can lock it
+      await trx('scheduler_heartbeats')
+        .insert({ name: 'expiration_scheduler', last_run_at: new Date() })
+        .onConflict('name')
+        .ignore()
+      
+      let heartbeat
       try {
-        const now = new Date();
-        await db("scheduler_heartbeats")
-          .insert({
-            name: "expiration_scheduler",
-            last_run_at: now,
-          })
-          .onConflict("name")
-          .merge({
-            last_run_at: now,
-          });
-      } catch (error) {
-        console.error("[ExpirationChecker] Failed to record heartbeat:", error);
+        heartbeat = await trx('scheduler_heartbeats')
+          .where('name', 'expiration_scheduler')
+          .forUpdate()
+          .noWait()
+          .first()
+      } catch (e: any) {
+        // PostgreSQL throws when lock is not available
+        console.log('[ExpirationChecker] Overlap detected (lock held), skipping run')
+        await trx.rollback()
+        return
       }
+
+      if (heartbeat) {
+        const gap = Date.now() - new Date(heartbeat.last_run_at).getTime()
+        if (gap > intervalMs * 2) {
+          console.warn(`[ExpirationChecker] Missed run detected and recovered (gap: ${gap}ms)`)
+        }
+      }
+
+      const expired = await processExpiredVaultsBatch()
+      await enqueueSlashJobs(expired, resolvedJobSystem)
+
+      const now = new Date()
+      await trx('scheduler_heartbeats')
+        .where('name', 'expiration_scheduler')
+        .update({ last_run_at: now })
+
+      await trx.commit()
+    } catch (error) {
+      console.error('[ExpirationChecker] Check failed:', error)
+      await trx.rollback()
     }
   };
 

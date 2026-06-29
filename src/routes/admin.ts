@@ -47,6 +47,7 @@ import {
 import { runReindexBatches, EMBEDDING_REINDEX_JOB_NAME } from '../services/evidenceReindex.js'
 import { MilestoneRepository } from '../repositories/milestoneRepository.js'
 import { BackfillCursorStore } from '../services/backfillCursorStore.js'
+import { TransactionETLService } from '../services/transactionETL.js'
 
 export const adminRouter = Router()
 
@@ -642,6 +643,40 @@ adminRouter.post('/overrides/vaults/:id/cancel', requireStepUp(), async (req, re
     previousStatus: cancelResult.previousStatus,
     newStatus: cancelResult.vault.status,
   })
+})
+
+adminRouter.get('/transaction-etl/drift-report', async (req, res) => {
+  try {
+    const etl = new TransactionETLService({ horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org', batchSize: Number(req.query.batchSize) || 50 })
+    const report = await etl.reconcileVaults()
+    res.status(200).json(report)
+  } catch (error) {
+    console.error('Error generating drift report:', error)
+    res.status(500).json({ error: 'Failed to generate drift report' })
+  }
+})
+
+adminRouter.post('/vaults/:id/auto-repair', requireStepUp(), async (req, res) => {
+  try {
+    const { id } = req.params
+    const etl = new TransactionETLService({ horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org', batchSize: 50 })
+    
+    const result = await etl.autoRepairVault(id, req.user!.userId)
+    
+    if (!result.success) {
+      if (result.message.includes('dispute/hold')) {
+        res.status(409).json({ error: result.message })
+        return
+      }
+      res.status(400).json({ error: result.message })
+      return
+    }
+    
+    res.status(200).json(result)
+  } catch (error) {
+    console.error('Error auto-repairing vault:', error)
+    res.status(500).json({ error: 'Failed to auto-repair vault' })
+  }
 })
 
 // User Management Endpoints
