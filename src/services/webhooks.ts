@@ -36,6 +36,7 @@ export interface WebhookSubscriber {
   rotatedAt: string | null
   events: string[]
   active: boolean
+  orgId?: string
   createdAt: string
   schemaVersion: number
   /**
@@ -423,34 +424,60 @@ export const verifySignature = (secret: string, body: string, signature: string)
   return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(signature, 'utf8'))
 }
 
-/**
- * Verifies a signature against a subscriber's current secret and, when within
- * the rotation grace window, also against the previous secret.
- *
- * This lets subscribers that have not yet updated their secret still pass
- * verification until the grace window closes.
- *
- * Returns `true` if at least one of the valid secrets matches.
- */
-export const verifySignatureWithGrace = (
-  subscriber: WebhookSubscriber,
-  body: string,
-  signature: string,
-): boolean => {
-  if (verifySignature(subscriber.secret, body, signature)) return true
-  if (isPreviousSecretInGrace(subscriber)) {
-    return verifySignature(subscriber.previousSecret!, body, signature)
+export const addSubscriber = (
+  url: string,
+  secret: string,
+  events: string[],
+  orgId?: string,
+  active = true,
+): WebhookSubscriber => {
+  if (!isUrlAllowed(url)) {
+    throw new Error(`Webhook URL not permitted: ${url}`)
   }
-  return false
+
+  const subscriber: WebhookSubscriber = {
+    id: randomUUID(),
+    url,
+    secret,
+    events: [...events],
+    active,
+    orgId,
+    createdAt: new Date().toISOString(),
+  }
+
+  subscribers.set(subscriber.id, subscriber)
+  return subscriber
 }
 
-// ── Egress allowlist ──────────────────────────────────────────────────────────
+export const removeSubscriber = (id: string, orgId?: string): boolean => {
+  const subscriber = subscribers.get(id)
+  if (!subscriber) {
+    return false
+  }
 
-export interface EgressAllowlistEntry {
-  id: string
-  organizationId: string
-  host: string
-  createdAt: string
+  if (orgId && subscriber.orgId !== orgId) {
+    return false
+  }
+
+  return subscribers.delete(id)
+}
+
+export const listSubscribers = (orgId?: string): WebhookSubscriber[] =>
+  Array.from(subscribers.values()).filter((s) => s.active && (!orgId || s.orgId === orgId))
+
+export const updateSubscriberSecret = (id: string, secret: string, orgId?: string): WebhookSubscriber | null => {
+  const subscriber = subscribers.get(id)
+  if (!subscriber) {
+    return null
+  }
+
+  if (orgId && subscriber.orgId !== orgId) {
+    return null
+  }
+
+  const updated = { ...subscriber, secret }
+  subscribers.set(id, updated)
+  return updated
 }
 
 /**
