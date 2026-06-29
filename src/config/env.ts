@@ -81,6 +81,8 @@ export const envSchema = z
       .string()
       .regex(/^\d+[smhd]$/, "invalid duration format")
       .default("7d"),
+    JWT_ISSUER: z.string().min(1, "JWT_ISSUER is required").default("disciplr"),
+    JWT_AUDIENCE: z.string().min(1, "JWT_AUDIENCE is required").default("disciplr-api"),
     DOWNLOAD_SECRET: z
       .string()
       .min(16, "must be at least 16 characters")
