@@ -2,6 +2,17 @@ import { Knex } from 'knex'
 import type { WebhookSubscriber, BreakerState, BreakerStateValue } from '../services/webhooks.js'
 import { FieldPolicy, parseFieldPolicy, DEFAULT_FIELD_POLICY } from '../utils/webhookFieldMasking.js'
 
+export interface DeliveryStats {
+  attempt_count: number
+  success_count: number
+  failure_count: number
+  success_rate: number
+  p50_latency_ms: number | null
+  p95_latency_ms: number | null
+  last_failure_reason: string | null
+  breaker_state: BreakerStateValue | null
+}
+
 interface SubscriberRow {
   id: string
   organization_id: string
@@ -304,5 +315,64 @@ export class WebhookSubscriberRepository {
       .where({ subscriber_id: subscriberId })
       .del()
     return count > 0
+  }
+
+  /**
+   * Returns aggregated delivery analytics for a subscriber over [windowStart, windowEnd).
+   * Uses PostgreSQL percentile_cont for accurate latency percentiles.
+   * All queries are bounded by the indexed (subscriber_id, attempted_at/failed_at) columns.
+   */
+  async getDeliveryStats(
+    subscriberId: string,
+    windowStart: Date,
+    windowEnd: Date,
+  ): Promise<DeliveryStats> {
+    const [agg] = await this.db.raw<{ rows: Array<{
+      attempt_count: string
+      success_count: string
+      p50: number | null
+      p95: number | null
+    }> }>(
+      `
+      SELECT
+        COUNT(*)::bigint AS attempt_count,
+        SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS success_count,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) AS p50,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95
+      FROM webhook_delivery_attempts
+      WHERE subscriber_id = :subscriberId
+        AND attempted_at >= :windowStart
+        AND attempted_at < :windowEnd
+      `,
+      { subscriberId, windowStart, windowEnd },
+    ).then((r) => r.rows)
+
+    const attemptCount = Number(agg.attempt_count ?? 0)
+    const successCount = Number(agg.success_count ?? 0)
+    const failureCount = attemptCount - successCount
+
+    const dlRow = await this.db('webhook_dead_letters')
+      .where('subscriber_id', subscriberId)
+      .where('failed_at', '>=', windowStart)
+      .where('failed_at', '<', windowEnd)
+      .orderBy('failed_at', 'desc')
+      .select('last_error')
+      .first()
+
+    const breakerRow = await this.db('webhook_breaker_states')
+      .where({ subscriber_id: subscriberId })
+      .select('state')
+      .first()
+
+    return {
+      attempt_count: attemptCount,
+      success_count: successCount,
+      failure_count: failureCount,
+      success_rate: attemptCount === 0 ? 0 : Math.round((successCount / attemptCount) * 1000) / 1000,
+      p50_latency_ms: agg.p50 != null ? Math.round(agg.p50) : null,
+      p95_latency_ms: agg.p95 != null ? Math.round(agg.p95) : null,
+      last_failure_reason: dlRow?.last_error ?? null,
+      breaker_state: (breakerRow?.state as BreakerStateValue) ?? null,
+    }
   }
 }

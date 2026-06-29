@@ -756,6 +756,8 @@ export const dispatchWebhookEvent = async (
         inFlightProbes.add(subscriber.id)
       }
 
+      const deliveryStart = Date.now()
+
       try {
         await retryWithBackoff(
           async () => {
@@ -771,11 +773,14 @@ export const dispatchWebhookEvent = async (
           },
         )
 
+        const latencyMs = Date.now() - deliveryStart
+
         // ── Success — reset breaker ──────────────────────────
         if (isHalfOpenProbe) {
           inFlightProbes.delete(subscriber.id)
         }
-        await recordBreakerSuccess(subscriber.id, config)
+        await recordBreakerSuccess(subscriber.id)
+        await persistDeliveryAttempt(subscriber.id, payload, true, latencyMs, lastStatusCode, attempts)
 
         return {
           subscriberId: subscriber.id,
@@ -785,6 +790,8 @@ export const dispatchWebhookEvent = async (
           attempts,
         }
       } catch (err: any) {
+        const latencyMs = Date.now() - deliveryStart
+
         if (isHalfOpenProbe) {
           inFlightProbes.delete(subscriber.id)
         }
@@ -795,6 +802,7 @@ export const dispatchWebhookEvent = async (
         // ── Failure — record in breaker ─────────────────────
         await recordBreakerFailure(subscriber.id, config)
 
+        await persistDeliveryAttempt(subscriber.id, payload, false, latencyMs, lastStatusCode, attempts, error)
         await deadLetter(subscriber.id, payload, error, attempts)
         return {
           subscriberId: subscriber.id,
@@ -826,6 +834,31 @@ const deadLetter = async (
     })
   } catch (err: any) {
     console.error(`[Webhooks] failed to persist dead letter:`, err?.message)
+  }
+}
+
+const persistDeliveryAttempt = async (
+  subscriberId: string,
+  payload: WebhookDeliveryPayload,
+  success: boolean,
+  latencyMs: number,
+  statusCode: number | undefined,
+  attemptNumber: number,
+  error?: string,
+): Promise<void> => {
+  try {
+    await db('webhook_delivery_attempts').insert({
+      subscriber_id: subscriberId,
+      event_id: payload.eventId,
+      event_type: payload.eventType,
+      success,
+      latency_ms: latencyMs,
+      status_code: statusCode ?? null,
+      attempt_number: attemptNumber,
+      error: error ?? null,
+    })
+  } catch (err: any) {
+    console.error(`[Webhooks] failed to persist delivery attempt:`, err?.message)
   }
 }
 
@@ -871,4 +904,61 @@ export const getBreakerStatesForMetrics = async (): Promise<{
     else if (s.state === 'HALF_OPEN') halfOpen++
   }
   return { closed, open, halfOpen }
+}
+
+export const MAX_STATS_WINDOW_MS = 72 * 60 * 60 * 1000
+
+/**
+ * Parses a window string like "24h" or "3d" into milliseconds.
+ * Accepts hours (h) up to 72 and days (d) up to 3. Returns null for invalid input.
+ */
+export const parseWindowMs = (raw: string): number | null => {
+  const m = /^(\d+)(h|d)$/.exec(raw.trim())
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n) || n <= 0) return null
+  const ms = m[2] === 'd' ? n * 24 * 60 * 60 * 1000 : n * 60 * 60 * 1000
+  if (ms > MAX_STATS_WINDOW_MS) return null
+  return ms
+}
+
+export interface SubscriberDeliveryStats {
+  subscriber_id: string
+  window: string
+  window_start: string
+  window_end: string
+  attempt_count: number
+  success_count: number
+  failure_count: number
+  success_rate: number
+  p50_latency_ms: number | null
+  p95_latency_ms: number | null
+  last_failure_reason: string | null
+  breaker_state: BreakerStateValue | null
+}
+
+/**
+ * Returns aggregated delivery analytics for a webhook subscriber over a bounded
+ * time window. Returns null when the subscriber does not exist.
+ */
+export const getSubscriberDeliveryStats = async (
+  subscriberId: string,
+  windowParam: string = '24h',
+): Promise<SubscriberDeliveryStats | null> => {
+  const subscriber = await repo.findById(subscriberId)
+  if (!subscriber) return null
+
+  const windowMs = parseWindowMs(windowParam) ?? 24 * 60 * 60 * 1000
+  const windowEnd = new Date()
+  const windowStart = new Date(windowEnd.getTime() - windowMs)
+
+  const stats = await repo.getDeliveryStats(subscriberId, windowStart, windowEnd)
+
+  return {
+    subscriber_id: subscriberId,
+    window: windowParam,
+    window_start: windowStart.toISOString(),
+    window_end: windowEnd.toISOString(),
+    ...stats,
+  }
 }

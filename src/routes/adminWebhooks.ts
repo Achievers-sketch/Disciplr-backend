@@ -13,6 +13,8 @@ import {
   removeEgressAllowlistEntry,
   listEgressAllowlist,
   updateSubscriberFieldPolicy,
+  getSubscriberDeliveryStats,
+  parseWindowMs,
 } from '../services/webhooks.js'
 import { isPaused, pauseDelivery, resumeDelivery } from '../services/pauseStore.js'
 import { isValidFieldPolicy, FieldPolicy } from '../utils/webhookFieldMasking.js'
@@ -363,6 +365,45 @@ adminWebhooksRouter.delete('/egress-allowlist', async (req: Request, res: Respon
   } catch (error) {
     console.error('Error removing egress allowlist entry:', error)
     res.status(500).json({ error: 'Failed to remove egress allowlist entry' })
+  }
+})
+
+/**
+ * GET /api/admin/webhooks/:id/stats?window=24h
+ *
+ * Returns aggregated delivery analytics for a webhook subscriber over a
+ * configurable time window. Admin-only.
+ *
+ * Query params:
+ *   window – time window string, e.g. "1h", "24h", "48h", "72h", "3d" (default: "24h", max: 72h)
+ *
+ * Response 200: { subscriber_id, window, window_start, window_end,
+ *   attempt_count, success_count, failure_count, success_rate,
+ *   p50_latency_ms, p95_latency_ms, last_failure_reason, breaker_state }
+ */
+adminWebhooksRouter.get('/:id/stats', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const rawWindow = typeof req.query.window === 'string' ? req.query.window : '24h'
+
+    if (parseWindowMs(rawWindow) === null) {
+      res.status(400).json({
+        error: 'Invalid window parameter. Use a value like "1h", "24h", "72h", or "3d" (max 72h).',
+      })
+      return
+    }
+
+    const stats = await getSubscriberDeliveryStats(id, rawWindow)
+
+    if (stats === null) {
+      res.status(404).json({ error: 'Subscriber not found' })
+      return
+    }
+
+    res.status(200).json(stats)
+  } catch (error) {
+    console.error('Error fetching webhook subscriber stats:', error)
+    res.status(500).json({ error: 'Failed to fetch subscriber stats' })
   }
 })
 
