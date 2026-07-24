@@ -33,25 +33,6 @@ orgAnalyticsRouter.get(
 )
 
 orgAnalyticsRouter.get(
-  '/:orgId/analytics',
-  authenticate,
-  requireOrgAccess('owner', 'admin'),
-  orgAnalyticsRateLimiter,
-  async (req: Request, res: Response) => {
-    const { orgId } = req.params
-    const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : undefined
-    const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : undefined
-
-    try {
-      const result = getOrgRiskAnalytics(orgId, vaults, { startDate, endDate })
-      res.json(result)
-    } catch (error: any) {
-      res.status(400).json({ error: error.message })
-    }
-  }
-)
-
-orgAnalyticsRouter.get(
   "/:orgId/analytics",
   authenticate,
   requireOrgAccess("owner", "admin"),
