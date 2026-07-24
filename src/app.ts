@@ -1,4 +1,5 @@
 import { httpMetricsMiddleware } from './observability/httpMetrics.js';
+import { tracingMiddleware } from './observability/tracingMiddleware.js';
 import cors from 'cors'
 import express from 'express'
 import helmet from 'helmet'
@@ -17,6 +18,7 @@ import { errorHandler } from './middleware/errorHandler.js'
 
 export const app = express()
 app.use(httpMetricsMiddleware);
+app.use(tracingMiddleware);
 
 // ---------------------------------------------------------------------------
 // Helmet — API-only hardened configuration
