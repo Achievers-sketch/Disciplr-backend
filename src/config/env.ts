@@ -302,7 +302,7 @@ let _validated: Env | undefined;
  */
 export function getEnv(): Env {
   if (!_validated) {
-    initEnv()
+    throw new Error("Env not initialized");
   }
   return _validated!;
 }
