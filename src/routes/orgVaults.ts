@@ -1,24 +1,15 @@
-import {
-  orgReadRateLimiter,
-  orgWriteRateLimiter,
-} from "../middleware/rateLimiter.js";
-import { Router, Request, Response, NextFunction } from "express";
-import { authenticate, getAuthenticatedUserId } from "../middleware/auth.js";
-import { requireOrgAccess } from "../middleware/orgAuth.js";
-import { AppError } from "../middleware/errorHandler.js";
-import { queryParser } from "../middleware/queryParser.js";
-import {
-  applyFilters,
-  applySort,
-  paginateArray,
-  encodeCursor,
-  decodeCursor,
-} from "../utils/pagination.js";
-import db from "../db/index.js";
-import type { Knex } from "knex";
-import { createHash } from "node:crypto";
+import { orgReadRateLimiter, orgWriteRateLimiter } from '../middleware/rateLimiter.js'
+import { Router, Request, Response } from 'express'
+import { authenticate } from '../middleware/auth.js'
+import { requireOrgAccess } from '../middleware/orgAuth.js'
+import { queryParser } from '../middleware/queryParser.js'
+import { applyFilters, applySort, paginateArray, encodeCursor, decodeCursor } from '../utils/pagination.js'
+import { listVaults } from '../services/vaultStore.js'
+import db from '../db/index.js'
+import type { Knex } from 'knex'
+import { createHash } from 'node:crypto'
 
-export const orgVaultsRouter = Router();
+export const orgVaultsRouter = Router()
 
 // ─── tsvector column detection cache ─────────────────────────────────────────
 // Whether the vaults.search_vector column exists is effectively static for the
@@ -64,7 +55,26 @@ orgVaultsRouter.get(
     allowedFilterFields: ["status", "creator"],
   }),
   async (req: Request, res: Response) => {
-    const { orgId } = req.params;
+    const { orgId } = req.params
+    const dbVaults = await db('vaults')
+      .where({ organization_id: orgId })
+      .whereNull('deleted_at')
+      .select('*')
+    
+    // Map DB fields to the expected Vault shape
+    let result = dbVaults.map(v => ({
+      id: v.id,
+      creator: v.creator,
+      amount: v.amount,
+      status: v.status,
+      startTimestamp: v.start_date,
+      endTimestamp: v.end_date,
+      successDestination: v.success_destination,
+      failureDestination: v.failure_destination,
+      verifier: v.verifier,
+      createdAt: v.created_at,
+      orgId: v.organization_id
+    }))
 
     try {
       const rows = await db("vaults")
